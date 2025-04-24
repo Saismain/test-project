@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: >
+      sh -c "sleep 10 &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - REDIS_URL=redis://redis:6379/0
+
+  celery:
+    build: .
+    command: >
+      sh -c "sleep 10 &&
+             celery -A app.tasks worker --loglevel=info"
+    volumes:
+      - .:/app
+    depends_on:
+      - web
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - REDIS_URL=redis://redis:6379/0
+
+  db:
+    image: postgres:13
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:6
+    ports:
+      - "6379:6379"
+
+  locust:
+    build: .
+    command: >
+      sh -c "sleep 10 &&
+             locust -f tests/locustfile.py --host=http://web:8000"
+    ports:
+      - "8089:8089"
+    volumes:
+      - .:/app
+    depends_on:
+      - web
+
+  init-db:
+    build: .
+    command: >
+      sh -c "sleep 10 &&
+             python -c 'from app.init_db import init_db; init_db()'"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+
+volumes:
+  postgres_data:
